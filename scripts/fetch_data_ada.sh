@@ -1,4 +1,7 @@
 #!/bin/bash
+
+# usage: bash scripts/fetch_data_ada.sh
+
 mkdir -p data
 for i in 1k 2k 4k 6k 8k 12k 16k 32k 64k 128k
 do
