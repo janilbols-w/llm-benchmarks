@@ -259,44 +259,67 @@ def sample_sharegpt_chat_requests(
     num_requests: int,
     tokenizer: PreTrainedTokenizerBase,
     fixed_output_len: Optional[int] = None,
+    k_rounds: int = 2,
 ) -> List[Tuple[str, int, int, None]]:
     # Load the dataset.
     with open(dataset_path, encoding='utf-8') as f:
         dataset = json.load(f)
     # Filter out the conversations with less than 2 turns.
-    dataset = [data for data in dataset if len(data["conversations"]) >= 2]
+    dataset = [data for data in dataset if len(data["conversations"]) >= k_rounds]
     
-    # Only keep the first two turns of each conversation.
-    import pdb; pbd.set_trace()
-    dataset = [(data["conversations"][0]["value"],
-                data["conversations"][1]["value"]) for data in dataset]
+    # # Only keep the first two turns of each conversation.
+    # dataset = [(data["conversations"][0]["value"],
+    #             data["conversations"][1]["value"]) for data in dataset]
 
     # Shuffle the dataset.
     random.shuffle(dataset)
 
     # Filter out sequences that are too long or too short
-    filtered_dataset: List[Tuple[str, int, int]] = []
+    filtered_dataset_fh: List[Tuple[List, int, int]] = []
+    filtered_dataset_sh: List[Tuple[List, int, int]] = []
+    num_samples = 0
     for i in range(len(dataset)):
-        if len(filtered_dataset) == num_requests:
-            break
-
-        # Tokenize the prompts and completions.
-        prompt = dataset[i][0]
-        prompt_token_ids = tokenizer(prompt).input_ids
-        completion = dataset[i][1]
-        completion_token_ids = tokenizer(completion).input_ids
-        prompt_len = len(prompt_token_ids)
-        output_len = len(completion_token_ids
-                         ) if fixed_output_len is None else fixed_output_len
-        if prompt_len < 4 or (fixed_output_len is None and output_len < 4):
-            # Prune too short sequences.
+        # print("="*50)
+        # print("[wuichak] conversation:", i)
+        chats = dataset[i]['conversations']
+        if len(chats) % 2 == 1:
             continue
-        if prompt_len > 1024 or prompt_len + output_len > 2048:
-            # Prune too long sequences.
-            continue
-        filtered_dataset.append((prompt, prompt_len, output_len, None))
+        message = []
+        prompt_len = 0
+        
+        for i_round in range(int(len(chats)/2)):
+            if num_samples == num_requests:
+                return filtered_dataset_fh + filtered_dataset_sh
+            
+            if i_round <= len(chats)/2:
+                filtered_dataset = filtered_dataset_fh
+            else:
+                filtered_dataset = filtered_dataset_sh
 
-    return filtered_dataset
+            # Tokenize the prompts and completions.
+            prompt = chats[i_round*2]["value"]
+            prompt_token_ids = tokenizer(prompt).input_ids
+            completion = chats[i_round*2+1]["value"]
+            completion_token_ids = tokenizer(completion).input_ids
+            prompt_len += len(prompt_token_ids)
+            message.append({"role": "user", "content": prompt})
+            output_len = len(completion_token_ids
+                            ) if fixed_output_len is None else fixed_output_len
+            if prompt_len < 200 or (fixed_output_len is None and output_len < 200):
+                # Prune too short sequences.
+                continue
+            if prompt_len > 16384 or prompt_len + output_len > 32768:
+                # Prune too long sequences.
+                continue
+            out_prompt = message.copy()
+            filtered_dataset.append((out_prompt, prompt_len, output_len, None))
+            num_samples += 1
+            # print("[wuichak] >> round: {}, total: {}".format(i_round, len(filtered_dataset)))
+            # print(message)
+            prompt_len += output_len
+            message.append({"role": "assistant", "content": completion})
+
+    return filtered_dataset_fh + filtered_dataset_sh
 
 
 def sample_burstgpt_requests(
@@ -1027,11 +1050,15 @@ def main(args: argparse.Namespace):
             fixed_output_len=args.sharegpt_output_len,
         )
     elif args.dataset_name == "sharegpt_chat":
+        assert args.backend == "openai-chat-full", \
+            "sharegpt_chat requires openai-chat-full as backend, \
+                but received {}".format(args.backend)
         input_requests = sample_sharegpt_chat_requests(
             dataset_path=args.dataset_path,
             num_requests=args.num_prompts,
             tokenizer=tokenizer,
             fixed_output_len=args.sharegpt_output_len,
+            k_rounds=args.k_rounds,
         )
 
     elif args.dataset_name == "burstgpt":
@@ -1223,7 +1250,7 @@ if __name__ == "__main__":
         "--dataset-name",
         type=str,
         default="sharegpt",
-        choices=["sharegpt", "burstgpt", "sonnet", "random", "hf", "stackselect", "textsort"],
+        choices=["sharegpt", "sharegpt_chat", "burstgpt", "sonnet", "random", "hf", "stackselect", "textsort"],
         help="Name of the dataset to benchmark on.",
     )
     parser.add_argument("--dataset-path",
@@ -1485,6 +1512,10 @@ if __name__ == "__main__":
                         help="A subset of LoRA module names passed in when "
                         "launching the server. For each request, the "
                         "script chooses a LoRA module at random.")
+
+    parser.add_argument("--k-rounds",
+                        type=int,
+                        default=2,)
 
     args = parser.parse_args()
     main(args)
