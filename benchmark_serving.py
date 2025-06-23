@@ -260,7 +260,10 @@ def sample_sharegpt_chat_requests(
     tokenizer: PreTrainedTokenizerBase,
     fixed_output_len: Optional[int] = None,
     k_rounds: int = 2,
+    min_prompt_len: int = 200,
+    max_seq_len: int = 32768,
 ) -> List[Tuple[str, int, int, None]]:
+    # modified by wuichak, along with backend=openai-chat-full
     # Load the dataset.
     with open(dataset_path, encoding='utf-8') as f:
         dataset = json.load(f)
@@ -305,10 +308,10 @@ def sample_sharegpt_chat_requests(
             message.append({"role": "user", "content": prompt})
             output_len = len(completion_token_ids
                             ) if fixed_output_len is None else fixed_output_len
-            if prompt_len < 200 or (fixed_output_len is None and output_len < 200):
+            if prompt_len < min_prompt_len or (fixed_output_len is None and output_len < min_prompt_len):
                 # Prune too short sequences.
                 continue
-            if prompt_len > 16384 or prompt_len + output_len > 32768:
+            if prompt_len + output_len > max_seq_len:
                 # Prune too long sequences.
                 continue
             out_prompt = message.copy()
